@@ -22,3 +22,7 @@ env/
 # 用户自定义的临时文件
 *.log
 *.tmp
+
+# 本分支构建产物与运行时数据
+SubtitleBlocker.app/
+ccblocker_data/
