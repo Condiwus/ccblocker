@@ -1,9 +1,52 @@
 import sys
+import ctypes
+import ctypes.util
+import os
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
 )
 from PyQt5.QtCore import Qt, QRect, QPoint
 from PyQt5.QtGui import QPalette, QColor, QCursor, QPainter, QPen
+
+
+def raise_above_fullscreen(win):
+    """macOS 专属：把窗口层级提到全屏视频之上，并允许出现在所有 Space。
+
+    Qt.WindowStaysOnTopHint 只能压过普通窗口，压不过全屏 App 所在的独立
+    Space。这里直接调用原生 NSWindow API 解决。非 macOS 或无界面模式跳过。
+    """
+    if sys.platform != "darwin":
+        return
+    if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+        return  # 无界面模式下 winId() 不是 NSView，跳过原生调用
+    try:
+        objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.sel_registerName.argtypes = [ctypes.c_char_p]
+        objc.objc_msgSend.restype = ctypes.c_void_p
+        objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+        view = int(win.winId())  # QWidget.winId() 在 macOS 上是 NSView*
+        sel_window = objc.sel_registerName(b"window")
+        ns_win = objc.objc_msgSend(view, sel_window)
+        if not ns_win:
+            return
+
+        # 允许窗口出现在所有 Space（含全屏视频所在的 Space）
+        sel_behavior = objc.sel_registerName(b"setCollectionBehavior:")
+        objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong]
+        objc.objc_msgSend(ns_win, sel_behavior, 1)  # NSWindowCollectionBehaviorCanJoinAllSpaces
+
+        # 把层级提到全屏屏蔽窗口(CGShieldingWindowLevel)之上
+        cg = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreGraphics"))
+        cg.CGShieldingWindowLevel.restype = ctypes.c_int
+        cg.CGShieldingWindowLevel.argtypes = []
+        level = cg.CGShieldingWindowLevel()
+        sel_level = objc.sel_registerName(b"setLevel:")
+        objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long]
+        objc.objc_msgSend(ns_win, sel_level, level + 1)
+    except Exception as e:  # 失败也不影响正常使用，仅失去全屏置顶
+        print("提示：无法启用全屏置顶（%s）" % e)
 
 
 class HeaderBar(QWidget):
@@ -259,4 +302,5 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     win = SubtitleOverlay()
     win.show()
+    raise_above_fullscreen(win)  # 全屏视频之上仍置顶
     sys.exit(app.exec_())
