@@ -2,8 +2,10 @@ import sys
 import ctypes
 import ctypes.util
 import os
+import json
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+    QColorDialog
 )
 from PyQt5.QtCore import Qt, QRect, QPoint
 from PyQt5.QtGui import QPalette, QColor, QCursor, QPainter, QPen
@@ -52,10 +54,11 @@ def raise_above_fullscreen(win):
 class HeaderBar(QWidget):
     """顶部拖动条 + 极简模式切换按钮。点击空白处移动窗口，点击按钮切换模式。"""
 
-    def __init__(self, parent=None, on_toggle=None):
+    def __init__(self, parent=None, on_toggle=None, on_color=None):
         super().__init__(parent)
         self.setFixedHeight(22)
         self.on_toggle = on_toggle
+        self.on_color = on_color
         self._drag_pos = None
 
         layout = QHBoxLayout(self)
@@ -69,6 +72,23 @@ class HeaderBar(QWidget):
         self.label.setFixedHeight(22)
         layout.addWidget(self.label, 1)
 
+        # 当前颜色色块
+        self.swatch = QLabel()
+        self.swatch.setFixedSize(16, 16)
+        self.swatch.setStyleSheet(
+            "background:#000;border:1px solid #555;margin:2px 4px 2px 0;"
+        )
+        layout.addWidget(self.swatch)
+
+        self.color_btn = QPushButton("颜色")
+        self.color_btn.setFixedSize(40, 22)
+        self.color_btn.setStyleSheet(
+            "background:#222;color:#bbb;border:none;font-size:12px;"
+            "border-left:1px solid #444;"
+        )
+        self.color_btn.clicked.connect(self._on_color)
+        layout.addWidget(self.color_btn)
+
         self.toggle_btn = QPushButton("收起")
         self.toggle_btn.setFixedSize(44, 22)
         self.toggle_btn.setStyleSheet(
@@ -81,9 +101,19 @@ class HeaderBar(QWidget):
     def set_minimal(self, minimal):
         self.toggle_btn.setText("展开" if minimal else "收起")
 
+    def set_color_swatch(self, color):
+        """更新顶部色块显示当前遮挡颜色。"""
+        self.swatch.setStyleSheet(
+            "background:%s;border:1px solid #555;margin:2px 4px 2px 0;" % color.name()
+        )
+
     def _on_toggle(self):
         if self.on_toggle:
             self.on_toggle()
+
+    def _on_color(self):
+        if self.on_color:
+            self.on_color()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -111,25 +141,69 @@ class SubtitleOverlay(QWidget):
         self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.setWindowFlag(Qt.FramelessWindowHint)
 
-        # 不透明黑色背景
+        # 不透明背景（颜色可调，默认纯黑）
+        self.overlay_color = QColor(0, 0, 0)
+        self._load_color()
         self.setAutoFillBackground(True)
-        pal = self.palette()
-        pal.setColor(QPalette.Window, QColor(0, 0, 0))
-        self.setPalette(pal)
+        self._apply_color()
 
         layout = QVBoxLayout()
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
         self.setLayout(layout)
 
-        # 顶部拖动条 + 模式切换（黑色遮挡主体由窗口黑色背景构成）
-        self.header = HeaderBar(self, on_toggle=self.toggle_minimal)
+        # 顶部拖动条 + 颜色选择 + 模式切换
+        self.header = HeaderBar(
+            self, on_toggle=self.toggle_minimal, on_color=self.choose_color
+        )
+        self.header.set_color_swatch(self.overlay_color)
         layout.addWidget(self.header)
         layout.addStretch(1)
 
         # 拖拽/拉伸相关
         self._drag_pos = None
         self._resize_dir = None
+
+    # ===== 颜色 =====
+    def _apply_color(self):
+        pal = self.palette()
+        pal.setColor(QPalette.Window, self.overlay_color)
+        self.setPalette(pal)
+
+    def choose_color(self):
+        color = QColorDialog.getColor(
+            self.overlay_color, self, "选择遮挡颜色"
+        )
+        if color.isValid():
+            self.overlay_color = color
+            self._apply_color()
+            self.header.set_color_swatch(color)
+            self._save_color()
+
+    def _config_path(self):
+        base = os.path.expanduser("~/ccblocker_data")
+        os.makedirs(base, exist_ok=True)
+        return os.path.join(base, "config.json")
+
+    def _load_color(self):
+        try:
+            p = self._config_path()
+            if os.path.exists(p):
+                with open(p) as f:
+                    d = json.load(f)
+                if d.get("color"):
+                    c = QColor(d["color"])
+                    if c.isValid():
+                        self.overlay_color = c
+        except Exception:
+            pass
+
+    def _save_color(self):
+        try:
+            with open(self._config_path(), "w") as f:
+                json.dump({"color": self.overlay_color.name()}, f)
+        except Exception:
+            pass
 
     # ===== 极简模式 =====
     def toggle_minimal(self):
