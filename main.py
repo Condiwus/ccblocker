@@ -5,10 +5,10 @@ import os
 import json
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QColorDialog
+    QColorDialog, QSlider
 )
-from PyQt5.QtCore import Qt, QRect, QPoint
-from PyQt5.QtGui import QPalette, QColor, QCursor, QPainter, QPen
+from PyQt5.QtCore import Qt, QRect, QPoint, QRectF
+from PyQt5.QtGui import QPalette, QColor, QCursor, QPainter, QPen, QPainterPath
 
 
 def raise_above_fullscreen(win):
@@ -54,12 +54,14 @@ def raise_above_fullscreen(win):
 class HeaderBar(QWidget):
     """顶部拖动条 + 极简模式切换按钮。点击空白处移动窗口，点击按钮切换模式。"""
 
-    def __init__(self, parent=None, on_toggle=None, on_color=None, on_preset=None):
+    def __init__(self, parent=None, on_toggle=None, on_color=None, on_preset=None,
+                 on_opacity=None, opacity=100):
         super().__init__(parent)
         self.setFixedHeight(22)
         self.on_toggle = on_toggle
         self.on_color = on_color
         self.on_preset = on_preset
+        self.on_opacity = on_opacity
         self._drag_pos = None
 
         layout = QHBoxLayout(self)
@@ -69,6 +71,7 @@ class HeaderBar(QWidget):
         self.label = QLabel("字幕遮挡工具 · 拖动移动 · ESC 退出")
         self.label.setStyleSheet(
             "background:#222;color:#bbb;padding-left:6px;font-size:12px;"
+            "border-top-left-radius:14px;"
         )
         self.label.setFixedHeight(22)
         layout.addWidget(self.label, 1)
@@ -100,11 +103,21 @@ class HeaderBar(QWidget):
         self.color_btn.clicked.connect(self._on_color)
         layout.addWidget(self.color_btn)
 
+        # 透明度滑块（30%-100%）
+        self.opacity_slider = QSlider(Qt.Horizontal)
+        self.opacity_slider.setFixedSize(70, 16)
+        self.opacity_slider.setRange(30, 100)
+        self.opacity_slider.setValue(int(opacity))
+        self.opacity_slider.setToolTip("遮挡透明度（越小越透明）")
+        self.opacity_slider.setStyleSheet("margin:0 4px 0 0;")
+        self.opacity_slider.valueChanged.connect(self._on_opacity)
+        layout.addWidget(self.opacity_slider)
+
         self.toggle_btn = QPushButton("收起")
         self.toggle_btn.setFixedSize(44, 22)
         self.toggle_btn.setStyleSheet(
             "background:#222;color:#bbb;border:none;font-size:12px;"
-            "border-left:1px solid #444;"
+            "border-left:1px solid #444;border-top-right-radius:14px;"
         )
         self.toggle_btn.clicked.connect(self._on_toggle)
         layout.addWidget(self.toggle_btn)
@@ -129,6 +142,10 @@ class HeaderBar(QWidget):
     def _on_preset(self, color):
         if self.on_preset:
             self.on_preset(color)
+
+    def _on_opacity(self, value):
+        if self.on_opacity:
+            self.on_opacity(value)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -156,21 +173,25 @@ class SubtitleOverlay(QWidget):
         self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.setWindowFlag(Qt.FramelessWindowHint)
 
-        # 不透明背景（颜色可调，默认纯黑）
+        # 半透明可穿透背景（颜色 / 透明度可调，默认纯黑不透明）
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAutoFillBackground(False)
         self.overlay_color = QColor(0, 0, 0)
+        self.opacity = 1.0
         self._load_color()
-        self.setAutoFillBackground(True)
         self._apply_color()
+        self.setWindowOpacity(self.opacity)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
         self.setLayout(layout)
 
-        # 顶部拖动条 + 颜色选择 + 预设色 + 模式切换
+        # 顶部拖动条 + 颜色选择 + 预设色 + 透明度 + 模式切换
         self.header = HeaderBar(
             self, on_toggle=self.toggle_minimal, on_color=self.choose_color,
-            on_preset=self.set_preset_color
+            on_preset=self.set_preset_color, on_opacity=self.set_opacity,
+            opacity=self.opacity * 100
         )
         self.header.set_color_swatch(self.overlay_color)
         layout.addWidget(self.header)
@@ -185,11 +206,16 @@ class SubtitleOverlay(QWidget):
         self._drag_pos = None
         self._resize_dir = None
 
-    # ===== 颜色 =====
+    # ===== 颜色 / 透明度 =====
     def _apply_color(self):
-        pal = self.palette()
-        pal.setColor(QPalette.Window, self.overlay_color)
-        self.setPalette(pal)
+        self.update()  # 改色后重绘（圆角填充在 paintEvent 中完成）
+
+    def set_opacity(self, value):
+        """透明度滑块回调：value 为 30-100 的整数百分比。"""
+        value = max(30, min(100, int(value)))
+        self.opacity = value / 100.0
+        self.setWindowOpacity(self.opacity)
+        self._save_color()
 
     def choose_color(self):
         color = QColorDialog.getColor(
@@ -216,13 +242,21 @@ class SubtitleOverlay(QWidget):
                     c = QColor(d["color"])
                     if c.isValid():
                         self.overlay_color = c
+                if "opacity" in d:
+                    try:
+                        self.opacity = max(0.3, min(1.0, float(d["opacity"])))
+                    except Exception:
+                        self.opacity = 1.0
         except Exception:
             pass
 
     def _save_color(self):
         try:
             with open(self._config_path(), "w") as f:
-                json.dump({"color": self.overlay_color.name()}, f)
+                json.dump(
+                    {"color": self.overlay_color.name(), "opacity": round(self.opacity, 2)},
+                    f,
+                )
         except Exception:
             pass
 
@@ -266,20 +300,21 @@ class SubtitleOverlay(QWidget):
 
     # === 无边框窗体的移动与拉伸 ===
     def paintEvent(self, event):
-        super().paintEvent(event)
-        # 极简模式下纯黑遮挡条，不绘制任何边框
-        if self.minimal:
-            return
+        # 用圆角矩形填充遮挡区，四角圆润；透明度由窗口整体 opacity 控制
         painter = QPainter(self)
         painter.setRenderHints(QPainter.Antialiasing)
-        pen1 = QPen(QColor(180, 180, 180), 2)
-        pen1.setJoinStyle(Qt.RoundJoin)
-        painter.setPen(pen1)
-        painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
-        pen2 = QPen(QColor(255, 255, 255), 1)
-        pen2.setJoinStyle(Qt.RoundJoin)
-        painter.setPen(pen2)
-        painter.drawRect(self.rect().adjusted(3, 3, -4, -4))
+        r = self.rect()
+        radius = min(14, r.height() // 2)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(r), radius, radius)
+        painter.fillPath(path, QColor(self.overlay_color))
+        if not self.minimal:
+            # 完整模式下画一圈浅色描边，方便看清边界
+            pen = QPen(QColor(180, 180, 180, 200), 2)
+            pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(pen)
+            painter.drawPath(path)
+        super().paintEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
