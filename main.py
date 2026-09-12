@@ -54,11 +54,12 @@ def raise_above_fullscreen(win):
 class HeaderBar(QWidget):
     """顶部拖动条 + 极简模式切换按钮。点击空白处移动窗口，点击按钮切换模式。"""
 
-    def __init__(self, parent=None, on_toggle=None, on_color=None):
+    def __init__(self, parent=None, on_toggle=None, on_color=None, on_preset=None):
         super().__init__(parent)
         self.setFixedHeight(22)
         self.on_toggle = on_toggle
         self.on_color = on_color
+        self.on_preset = on_preset
         self._drag_pos = None
 
         layout = QHBoxLayout(self)
@@ -79,6 +80,16 @@ class HeaderBar(QWidget):
             "background:#000;border:1px solid #555;margin:2px 4px 2px 0;"
         )
         layout.addWidget(self.swatch)
+
+        # 常用预设色（黑 / 白 / 灰），点一下即换
+        for color in (QColor("#000000"), QColor("#ffffff"), QColor("#808080")):
+            b = QPushButton()
+            b.setFixedSize(16, 16)
+            b.setStyleSheet(
+                "background:%s;border:1px solid #555;margin:2px 2px 2px 0;" % color.name()
+            )
+            b.clicked.connect(lambda _checked=False, c=color: self._on_preset(c))
+            layout.addWidget(b)
 
         self.color_btn = QPushButton("颜色")
         self.color_btn.setFixedSize(40, 22)
@@ -114,6 +125,10 @@ class HeaderBar(QWidget):
     def _on_color(self):
         if self.on_color:
             self.on_color()
+
+    def _on_preset(self, color):
+        if self.on_preset:
+            self.on_preset(color)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -152,13 +167,19 @@ class SubtitleOverlay(QWidget):
         layout.setSpacing(6)
         self.setLayout(layout)
 
-        # 顶部拖动条 + 颜色选择 + 模式切换
+        # 顶部拖动条 + 颜色选择 + 预设色 + 模式切换
         self.header = HeaderBar(
-            self, on_toggle=self.toggle_minimal, on_color=self.choose_color
+            self, on_toggle=self.toggle_minimal, on_color=self.choose_color,
+            on_preset=self.set_preset_color
         )
         self.header.set_color_swatch(self.overlay_color)
         layout.addWidget(self.header)
         layout.addStretch(1)
+
+        # 快捷键循环用的预设色列表（按 C 依次切换）
+        self.preset_colors = [
+            QColor("#000000"), QColor("#ffffff"), QColor("#808080")
+        ]
 
         # 拖拽/拉伸相关
         self._drag_pos = None
@@ -204,6 +225,20 @@ class SubtitleOverlay(QWidget):
                 json.dump({"color": self.overlay_color.name()}, f)
         except Exception:
             pass
+
+    def set_preset_color(self, color):
+        """点击预设色块或按 C 循环时调用，立即换色并保存。"""
+        self.overlay_color = QColor(color)
+        self._apply_color()
+        self.header.set_color_swatch(self.overlay_color)
+        self._save_color()
+
+    def _cycle_preset(self):
+        """按 C 在预设色（黑→白→灰→黑）之间循环。"""
+        names = [c.name().lower() for c in self.preset_colors]
+        cur = self.overlay_color.name().lower()
+        idx = (names.index(cur) + 1) % len(self.preset_colors) if cur in names else 0
+        self.set_preset_color(self.preset_colors[idx])
 
     # ===== 极简模式 =====
     def toggle_minimal(self):
@@ -368,6 +403,8 @@ class SubtitleOverlay(QWidget):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             self.close()
+        elif event.key() == Qt.Key_C:
+            self._cycle_preset()
         else:
             super().keyPressEvent(event)
 
