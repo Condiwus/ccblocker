@@ -12,15 +12,24 @@ from PyQt5.QtGui import QPalette, QColor, QCursor, QPainter, QPen, QPainterPath
 
 
 def raise_above_fullscreen(win):
-    """macOS 专属：把窗口层级提到全屏视频之上，并允许出现在所有 Space。
+    """让遮挡窗在（Windows/macOS 的）全屏视频之上仍保持置顶。
 
-    Qt.WindowStaysOnTopHint 只能压过普通窗口，压不过全屏 App 所在的独立
-    Space。这里直接调用原生 NSWindow API 解决。非 macOS 或无界面模式跳过。
+    - macOS：Qt.WindowStaysOnTopHint 压不过全屏 App 所在的独立 Space，
+      需调用原生 NSWindow API 提升层级并允许出现在所有 Space。
+    - Windows：Qt.WindowStaysOnTopHint 一般已够，但部分独占全屏仍可能盖住，
+      这里用 user32.SetWindowPos 强制 TOPMOST 兜底。
+    - 无界面模式 / 其他平台：跳过（不影响普通使用）。
     """
-    if sys.platform != "darwin":
-        return
     if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
-        return  # 无界面模式下 winId() 不是 NSView，跳过原生调用
+        return  # 无界面模式下 winId() 不是真实窗口句柄，跳过原生调用
+    if sys.platform == "darwin":
+        _raise_macos(win)
+    elif sys.platform == "win32":
+        _raise_windows(win)
+
+
+def _raise_macos(win):
+    """macOS：提升 NSWindow 层级并允许出现在所有 Space。"""
     try:
         objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
         objc.sel_registerName.restype = ctypes.c_void_p
@@ -48,6 +57,21 @@ def raise_above_fullscreen(win):
         objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long]
         objc.objc_msgSend(ns_win, sel_level, level + 1)
     except Exception as e:  # 失败也不影响正常使用，仅失去全屏置顶
+        print("提示：无法启用全屏置顶（%s）" % e)
+
+
+def _raise_windows(win):
+    """Windows：用 user32.SetWindowPos 强制置顶，兜底覆盖独占全屏。"""
+    try:
+        hwnd = int(win.winId())
+        user32 = ctypes.windll.user32
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        HWND_TOPMOST = -1
+        user32.SetWindowPos(
+            hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE
+        )
+    except Exception as e:
         print("提示：无法启用全屏置顶（%s）" % e)
 
 

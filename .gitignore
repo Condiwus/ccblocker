@@ -2,10 +2,9 @@
 __pycache__/
 *.py[cod]
 
-# PyInstaller build
+# PyInstaller 构建产物（打包脚本 *.spec 保留入库）
 build/
 dist/
-*.spec
 
 # Mac系统垃圾
 .DS_Store
