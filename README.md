@@ -33,7 +33,13 @@
 
 ### Windows
 
-1. 安装 Python 3.13+，建虚拟环境并装依赖：
+**一键打包（推荐）**：在 Windows 上装好 Python 3.11 或 3.13 后，双击 `build_windows.bat` 即可自动建虚拟环境、装依赖、打包，产物为 `dist\字幕遮挡工具.exe`。
+
+> ⚠️ 建议用 **Python 3.11 / 3.13**。**不要**用 3.14——PyQt5 暂无 3.14 的预编译包，会安装失败。
+
+手动步骤亦可：
+
+1. 建虚拟环境并装依赖：
    ```bat
    python -m venv venv
    venv\Scripts\activate
@@ -46,6 +52,13 @@
    pyinstaller build_windows.spec
    ```
    生成的 `dist\字幕遮挡工具.exe` 即为可分发程序（可选加图标：`pyinstaller build_windows.spec --icon app.ico`）。
+
+**打包后自检清单**：
+- [ ] `dist\字幕遮挡工具.exe` 生成成功，大小约 30–40 MB
+- [ ] 双击 `.exe` 能弹出遮挡窗（无需 Python 环境）
+- [ ] 拖动顶栏移动、拖边缘缩放正常
+- [ ] 全屏播放视频时遮挡窗仍置顶（Win 上 Qt 置顶一般已够；若被独占全屏盖住属已知边界）
+- [ ] 颜色/透明度选择与极简模式正常，重启后配置保留
 
 ## 操作速查
 
